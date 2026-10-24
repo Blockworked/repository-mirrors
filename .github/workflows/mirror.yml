@@ -1,0 +1,68 @@
+name: Mirror Blockworked repositories
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Create and update destination repositories
+        type: boolean
+        default: false
+      repository:
+        description: Optional public repository name (leave empty to sync all)
+        type: string
+        default: ''
+      allow_default_force_push:
+        description: Allow force pushes on the selected managed GitLab mirror default branch
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: blockworked-mirrors
+  cancel-in-progress: false
+jobs:
+  mirror:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      SOURCE_ORG: Blockworked
+      SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
+      CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      CODEBERG_OWNER: ${{ vars.CODEBERG_OWNER }}
+      GITLAB_NAMESPACE: ${{ vars.GITLAB_NAMESPACE }}
+      EXCLUDE_REPOS: ${{ vars.EXCLUDE_REPOS }}
+      MIRROR_ENABLED: ${{ vars.MIRROR_ENABLED }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install Git LFS
+        run: |
+          if ! git lfs version; then
+            sudo apt-get update
+            sudo apt-get install -y git-lfs
+          fi
+      - name: Discover and mirror repositories
+        env:
+          APPLY: ${{ inputs.apply }}
+          EVENT_NAME: ${{ github.event_name }}
+          SELECTED_REPOSITORY: ${{ inputs.repository }}
+          ALLOW_DEFAULT_FORCE_PUSH: ${{ inputs.allow_default_force_push }}
+        run: |
+          if [ "$EVENT_NAME" = "schedule" ] && [ "$MIRROR_ENABLED" != "true" ]; then
+            echo 'Scheduled mirroring is disabled. Set MIRROR_ENABLED=true after reviewing the plan.'
+            exit 0
+          fi
+          args=()
+          if [ "$ALLOW_DEFAULT_FORCE_PUSH" = "true" ]; then
+            args+=(--allow-default-force-push)
+          fi
+          if [ -n "$SELECTED_REPOSITORY" ]; then
+            args+=(--repo "$SELECTED_REPOSITORY")
+          fi
+          if [ "$EVENT_NAME" = "schedule" ] || [ "$APPLY" = "true" ]; then
+            args+=(--apply)
+          fi
+          python3 mirror.py "${args[@]}"
